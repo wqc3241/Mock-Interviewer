@@ -86,7 +86,7 @@ const SetupScreen: React.FC<SetupScreenProps> = ({ onStart, onResearchStart }) =
   return (
     <div className="max-w-3xl mx-auto space-y-8 animate-fade-in pb-12">
       <div className="bg-white/80 backdrop-blur-md rounded-2xl shadow-xl p-8 border border-white/20">
-        <header className="mb-8">
+        <header className="mb-8 text-center md:text-left">
           <h1 className="text-4xl font-extrabold bg-gradient-to-r from-indigo-600 to-violet-600 bg-clip-text text-transparent">MockMate AI</h1>
           <p className="text-gray-500 mt-2">Next-gen interview simulation with deep persona research.</p>
         </header>
@@ -98,7 +98,7 @@ const SetupScreen: React.FC<SetupScreenProps> = ({ onStart, onResearchStart }) =
               <input 
                 type="url" 
                 placeholder="https://linkedin.com/jobs/..."
-                className="w-full px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none"
+                className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-gray-900 placeholder:text-gray-400"
                 value={jdLink}
                 onChange={e => setJdLink(e.target.value)}
               />
@@ -107,8 +107,8 @@ const SetupScreen: React.FC<SetupScreenProps> = ({ onStart, onResearchStart }) =
               <label className="text-sm font-semibold text-gray-700">Interviewer Name/LinkedIn</label>
               <input 
                 type="text" 
-                placeholder="e.g. Satya Nadella or Jane Doe, HR at Google"
-                className="w-full px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none"
+                placeholder="e.g. Satya Nadella or Jane Doe"
+                className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-gray-900 placeholder:text-gray-400"
                 value={interviewerName}
                 onChange={e => setInterviewerName(e.target.value)}
               />
@@ -118,7 +118,7 @@ const SetupScreen: React.FC<SetupScreenProps> = ({ onStart, onResearchStart }) =
           <div className="space-y-2">
             <label className="text-sm font-semibold text-gray-700">Full Job Description</label>
             <textarea 
-              className="w-full h-48 px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none resize-none"
+              className="w-full h-48 px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none resize-none text-gray-900 placeholder:text-gray-400"
               placeholder="Paste the raw text here for deeper context..."
               value={content}
               onChange={e => setContent(e.target.value)}
