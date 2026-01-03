@@ -27,20 +27,47 @@ export const useInterviewSession = ({ apiKey, jobDescription, persona, onDisconn
   const audioSourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
   const currentInputTranscriptionRef = useRef('');
   const currentOutputTranscriptionRef = useRef('');
+  
+  const connectionStarted = useRef(false);
+  const nudgeSent = useRef(false);
+  const onDisconnectRef = useRef(onDisconnect);
 
-  // Function to resume audio context on user gesture
+  useEffect(() => {
+    onDisconnectRef.current = onDisconnect;
+  }, [onDisconnect]);
+
+  // Use refs for stable access to state-like JD and Persona data to avoid dependency-induced loops
+  const jdRef = useRef(jobDescription);
+  const personaRef = useRef(persona);
+  useEffect(() => { jdRef.current = jobDescription; }, [jobDescription]);
+  useEffect(() => { personaRef.current = persona; }, [persona]);
+
   const resumeAudio = useCallback(async () => {
-    if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
-      await audioContextRef.current.resume();
+    try {
+      if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
+        await audioContextRef.current.resume();
+      }
+      if (inputAudioContextRef.current && inputAudioContextRef.current.state === 'suspended') {
+        await inputAudioContextRef.current.resume();
+      }
       setAudioContextSuspended(false);
-    }
-    if (inputAudioContextRef.current && inputAudioContextRef.current.state === 'suspended') {
-      await inputAudioContextRef.current.resume();
+
+      // Once user interacts and audio is active, nudge the model to start if it hasn't already
+      if (sessionRef.current && !nudgeSent.current) {
+        nudgeSent.current = true;
+        // In Live API, we can nudge the model turn by sending a text-based input part
+        sessionRef.current.sendRealtimeInput({ 
+          text: "The candidate has entered the room and is ready. Please introduce yourself and begin the interview." 
+        });
+      }
+    } catch (err) {
+      console.error("Failed to resume audio context:", err);
     }
   }, []);
 
   const connect = useCallback(async () => {
-    if (!apiKey) return;
+    if (!apiKey || connectionStarted.current) return;
+    connectionStarted.current = true;
 
     try {
       const ai = new GoogleGenAI({ apiKey });
@@ -55,28 +82,30 @@ export const useInterviewSession = ({ apiKey, jobDescription, persona, onDisconn
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
 
-      const personaInstruction = persona ? `
+      const p = personaRef.current;
+      const j = jdRef.current;
+
+      const personaInstruction = p ? `
         ADOPT INTERVIEWER PERSONA:
-        Name: ${persona.name}
-        Style: ${persona.style}
-        Background: ${persona.backgroundSummary}
-        Company Vibe: ${persona.companyVibe}
-        Goal: Interview the candidate for the ${jobDescription.title} role.
+        Name: ${p.name}
+        Professional Style: ${p.style}
+        Background: ${p.backgroundSummary}
+        Company Context: ${p.companyVibe}
       ` : "Adopt a standard professional senior recruiter persona.";
 
       const sysInstruction = `
         ${personaInstruction}
         
         CONTEXT:
-        Target Role: ${jobDescription.title}
-        JD Snapshot: ${jobDescription.content.substring(0, 800)}
+        Target Role: ${j.title}
+        JD Content: ${j.content.substring(0, 500)}
 
-        OPERATIONAL PROTOCOL:
-        1. **INITIATION**: You MUST speak immediately upon connection. Introduce yourself and ask the first question. Do not wait for user input.
-        2. **TURN TAKING**: Be extremely patient. Wait for at least 1.5 seconds of silence before you respond to the candidate.
-        3. **INTERRUPTIONS**: If you hear the user start speaking while you are talking, STOP immediately.
-        4. **FEEDBACK**: Briefly acknowledge their answer before moving to your next question.
-        5. **CONCISION**: Keep your turns short (max 3 sentences).
+        CRITICAL OPERATIONAL INSTRUCTIONS:
+        1. **INITIATION**: You are the interviewer. You MUST start the conversation. Do not wait for the user to speak first. 
+        2. **FIRST TURN**: Introduce yourself briefly and ask the first behavioral or technical question based on the JD.
+        3. **PACING**: Be patient. Wait for the candidate to finish their response (at least 2 seconds of silence) before you reply.
+        4. **INTERRUPTIONS**: If the user starts talking while you are speaking, STOP your audio output immediately.
+        5. **LENGTH**: Keep your responses concise (under 3 sentences).
       `;
 
       const sessionPromise = ai.live.connect({
@@ -85,25 +114,20 @@ export const useInterviewSession = ({ apiKey, jobDescription, persona, onDisconn
           responseModalities: [Modality.AUDIO],
           systemInstruction: sysInstruction,
           speechConfig: {
-            voiceConfig: { prebuiltVoiceConfig: { voiceName: persona?.style.toLowerCase().includes('technical') ? 'Puck' : 'Fenrir' } },
+            voiceConfig: { prebuiltVoiceConfig: { voiceName: p?.style.toLowerCase().includes('technical') ? 'Puck' : 'Fenrir' } },
           },
           inputAudioTranscription: {},
           outputAudioTranscription: {},
         },
         callbacks: {
           onopen: async () => {
-            console.log("Live session opened");
+            console.log("Live session connection established");
             setIsConnected(true);
             
-            // Try to resume contexts
-            if (outputCtx.state === 'suspended') await outputCtx.resume().catch(console.warn);
-            if (inputCtx.state === 'suspended') await inputCtx.resume().catch(console.warn);
-            setAudioContextSuspended(outputCtx.state === 'suspended');
-
             const session = await sessionPromise;
             sessionRef.current = session;
 
-            // Start microphone streaming
+            // Setup microphone capture
             const source = inputCtx.createMediaStreamSource(stream);
             const processor = inputCtx.createScriptProcessor(4096, 1, 1);
             
@@ -111,13 +135,15 @@ export const useInterviewSession = ({ apiKey, jobDescription, persona, onDisconn
               if (!sessionRef.current) return;
               const inputData = e.inputBuffer.getChannelData(0);
               
-              // Volume for visualizer
+              // Volume visualization
               let sum = 0;
               for(let i = 0; i < inputData.length; i++) sum += inputData[i] * inputData[i];
               setCurrentVolume(Math.sqrt(sum / inputData.length));
               
-              // Send PCM
-              sessionRef.current.sendRealtimeInput({ media: createBlob(inputData) });
+              // Only stream input if we're not suspended (user has clicked start)
+              if (outputCtx.state !== 'suspended') {
+                sessionRef.current.sendRealtimeInput({ media: createBlob(inputData) });
+              }
             };
             
             source.connect(processor);
@@ -125,34 +151,40 @@ export const useInterviewSession = ({ apiKey, jobDescription, persona, onDisconn
             silenceGain.gain.value = 0;
             processor.connect(silenceGain);
             silenceGain.connect(inputCtx.destination);
+
+            // Trigger the model to speak if it hasn't started and context is already active
+            if (outputCtx.state !== 'suspended' && !nudgeSent.current) {
+              nudgeSent.current = true;
+              session.sendRealtimeInput({ text: "Please begin the interview." });
+            }
           },
           onmessage: async (msg: LiveServerMessage) => {
-            // Process any model turn parts (usually audio)
             if (msg.serverContent?.modelTurn?.parts) {
               for (const part of msg.serverContent.modelTurn.parts) {
                 if (part.inlineData?.data) {
                   setIsModelSpeaking(true);
-                  if (outputCtx.state === 'suspended') await outputCtx.resume().catch(console.warn);
-                  
-                  const audioBuffer = await decodeAudioData(base64ToUint8Array(part.inlineData.data), outputCtx, 24000, 1);
-                  const source = outputCtx.createBufferSource();
-                  source.buffer = audioBuffer;
-                  source.connect(outputCtx.destination);
-                  
-                  const startTime = Math.max(nextStartTimeRef.current, outputCtx.currentTime);
-                  source.start(startTime);
-                  nextStartTimeRef.current = startTime + audioBuffer.duration;
-                  
-                  audioSourcesRef.current.add(source);
-                  source.onended = () => {
-                    audioSourcesRef.current.delete(source);
-                    if (audioSourcesRef.current.size === 0) setIsModelSpeaking(false);
-                  };
+                  try {
+                    const audioBuffer = await decodeAudioData(base64ToUint8Array(part.inlineData.data), outputCtx, 24000, 1);
+                    const source = outputCtx.createBufferSource();
+                    source.buffer = audioBuffer;
+                    source.connect(outputCtx.destination);
+                    
+                    const startTime = Math.max(nextStartTimeRef.current, outputCtx.currentTime);
+                    source.start(startTime);
+                    nextStartTimeRef.current = startTime + audioBuffer.duration;
+                    
+                    audioSourcesRef.current.add(source);
+                    source.onended = () => {
+                      audioSourcesRef.current.delete(source);
+                      if (audioSourcesRef.current.size === 0) setIsModelSpeaking(false);
+                    };
+                  } catch (err) {
+                    console.error("Playback error:", err);
+                  }
                 }
               }
             }
 
-            // Handle Transcriptions
             if (msg.serverContent?.outputTranscription) {
               currentOutputTranscriptionRef.current += msg.serverContent.outputTranscription.text;
               setTextBuffer(currentOutputTranscriptionRef.current);
@@ -161,22 +193,22 @@ export const useInterviewSession = ({ apiKey, jobDescription, persona, onDisconn
               currentInputTranscriptionRef.current += msg.serverContent.inputTranscription.text;
             }
 
-            // Handle Turn Completion
             if (msg.serverContent?.turnComplete) {
-              const items: TranscriptItem[] = [];
-              if (currentInputTranscriptionRef.current.trim()) {
-                items.push({ role: 'user', text: currentInputTranscriptionRef.current.trim(), timestamp: Date.now() });
-                currentInputTranscriptionRef.current = '';
-              }
-              if (currentOutputTranscriptionRef.current.trim()) {
-                items.push({ role: 'model', text: currentOutputTranscriptionRef.current.trim(), timestamp: Date.now() });
-                currentOutputTranscriptionRef.current = '';
-                setTextBuffer('');
-              }
-              if (items.length > 0) setTranscript(prev => [...prev, ...items]);
+              setTranscript(prev => {
+                const newItems: TranscriptItem[] = [];
+                if (currentInputTranscriptionRef.current.trim()) {
+                  newItems.push({ role: 'user', text: currentInputTranscriptionRef.current.trim(), timestamp: Date.now() });
+                  currentInputTranscriptionRef.current = '';
+                }
+                if (currentOutputTranscriptionRef.current.trim()) {
+                  newItems.push({ role: 'model', text: currentOutputTranscriptionRef.current.trim(), timestamp: Date.now() });
+                  currentOutputTranscriptionRef.current = '';
+                  setTextBuffer('');
+                }
+                return [...prev, ...newItems];
+              });
             }
 
-            // Handle Interruptions
             if (msg.serverContent?.interrupted) {
               audioSourcesRef.current.forEach(s => { try { s.stop(); } catch {} });
               audioSourcesRef.current.clear();
@@ -188,29 +220,32 @@ export const useInterviewSession = ({ apiKey, jobDescription, persona, onDisconn
           onclose: () => {
             console.log("Live session closed");
             setIsConnected(false);
-            onDisconnect();
+            connectionStarted.current = false;
+            onDisconnectRef.current();
           },
           onerror: (e) => {
-            console.error("Live Session Error:", e);
-            onDisconnect();
+            console.error("Live session error:", e);
+            setIsConnected(false);
+            connectionStarted.current = false;
+            onDisconnectRef.current();
           }
         }
       });
     } catch (e) {
-      console.error("Connection process failed:", e);
-      onDisconnect();
+      console.error("Connect failed:", e);
+      connectionStarted.current = false;
+      onDisconnectRef.current();
     }
-  }, [apiKey, jobDescription, persona, onDisconnect]);
+  }, [apiKey]); // Dependency on apiKey only to keep the function stable
 
   const disconnect = useCallback(() => {
-    if (sessionRef.current) {
-       // Note: session.close() is standard if available, but here we cleanup contexts
-    }
+    if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
     [audioContextRef, inputAudioContextRef].forEach(ref => {
       if (ref.current && ref.current.state !== 'closed') ref.current.close();
     });
-    if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
     setIsConnected(false);
+    connectionStarted.current = false;
+    nudgeSent.current = false;
   }, []);
 
   useEffect(() => {
