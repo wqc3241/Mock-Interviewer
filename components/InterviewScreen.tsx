@@ -12,7 +12,16 @@ interface InterviewScreenProps {
 
 const InterviewScreen: React.FC<InterviewScreenProps> = ({ jobDescription, settings, persona, onEndSession }) => {
   const apiKey = process.env.API_KEY || '';
-  const { isConnected, isModelSpeaking, currentVolume, transcript, textBuffer, disconnect } = useInterviewSession({
+  const { 
+    isConnected, 
+    isModelSpeaking, 
+    currentVolume, 
+    transcript, 
+    textBuffer, 
+    audioContextSuspended,
+    resumeAudio,
+    disconnect 
+  } = useInterviewSession({
     apiKey, jobDescription, persona, onDisconnect: () => {}
   });
 
@@ -20,20 +29,34 @@ const InterviewScreen: React.FC<InterviewScreenProps> = ({ jobDescription, setti
 
   useEffect(() => {
     let interval: any;
-    // Timer only runs when the candidate is supposed to be talking
-    if (!isModelSpeaking && isConnected && timeLeft > 0) {
+    // Timer only runs when the candidate is talking and session is fully active
+    if (!isModelSpeaking && isConnected && !audioContextSuspended && transcript.length > 0 && timeLeft > 0) {
       interval = setInterval(() => setTimeLeft(prev => prev - 1), 1000);
     } else if (isModelSpeaking) {
-      // Reset or pause timer when model speaks
       setTimeLeft(settings.timeLimitSeconds);
     }
     return () => clearInterval(interval);
-  }, [isModelSpeaking, isConnected, timeLeft, settings.timeLimitSeconds]);
+  }, [isModelSpeaking, isConnected, timeLeft, settings.timeLimitSeconds, audioContextSuspended, transcript.length]);
 
   const ringSize = 140 + (currentVolume * 300);
 
   return (
     <div className="max-w-5xl mx-auto h-[85vh] flex flex-col bg-gray-900 rounded-3xl overflow-hidden shadow-2xl border border-white/5 relative">
+      
+      {/* Audio Context Activation Overlay */}
+      {audioContextSuspended && (
+        <div 
+          className="absolute inset-0 z-50 bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center p-8 text-center cursor-pointer group"
+          onClick={resumeAudio}
+        >
+          <div className="w-20 h-20 bg-indigo-600 rounded-full flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
+            <svg className="w-10 h-10 text-white" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+          </div>
+          <h2 className="text-2xl font-bold text-white mb-2">Audio is Muted by Browser</h2>
+          <p className="text-gray-400 max-w-sm">Tap anywhere to activate your speakers and microphone to begin the interview.</p>
+        </div>
+      )}
+
       {/* Header */}
       <div className="px-8 py-5 border-b border-white/10 flex justify-between items-center bg-black/20 backdrop-blur-md z-20">
         <div className="flex items-center gap-4">
@@ -42,8 +65,8 @@ const InterviewScreen: React.FC<InterviewScreenProps> = ({ jobDescription, setti
           </div>
           <div className="max-w-md">
             <h2 className="text-white font-bold leading-tight">{persona?.name || "AI Interviewer"}</h2>
-            <p className="text-gray-400 text-[10px] leading-tight truncate mt-0.5">
-              {persona?.backgroundSummary || "Professional Session"}
+            <p className="text-gray-400 text-[10px] leading-tight truncate mt-0.5 uppercase tracking-tighter">
+              {persona?.companyVibe || "Professional Session"}
             </p>
           </div>
         </div>
@@ -57,21 +80,18 @@ const InterviewScreen: React.FC<InterviewScreenProps> = ({ jobDescription, setti
 
       {/* Main Stage */}
       <div className="flex-1 relative flex flex-col items-center justify-center overflow-hidden">
-        {/* Visualizer Aura - Reacts to user input */}
-        {!isModelSpeaking && isConnected && (
-          <div 
-            className="absolute rounded-full transition-all duration-150 blur-3xl opacity-20 bg-green-500"
-            style={{ width: ringSize * 1.5, height: ringSize * 1.5 }}
-          />
+        {/* Connection Status Indicator */}
+        {!isConnected && (
+           <div className="absolute top-4 bg-yellow-500/20 text-yellow-500 px-4 py-1 rounded-full text-xs font-bold animate-pulse border border-yellow-500/20">
+             Establishing Connection...
+           </div>
         )}
-        
-        {/* Visualizer Aura - Reacts to model output */}
-        {isModelSpeaking && (
-           <div 
-           className="absolute rounded-full transition-all duration-300 blur-3xl opacity-30 bg-indigo-500 animate-pulse"
-           style={{ width: 400, height: 400 }}
-         />
-        )}
+
+        {/* Visualizer Aura */}
+        <div 
+          className={`absolute rounded-full transition-all duration-300 blur-3xl opacity-20 ${isModelSpeaking ? 'bg-indigo-500' : 'bg-green-500'}`}
+          style={{ width: isModelSpeaking ? 400 : ringSize * 1.5, height: isModelSpeaking ? 400 : ringSize * 1.5 }}
+        />
         
         <div className="relative z-10 flex flex-col items-center gap-12 w-full px-12">
           {/* Avatar Ring */}
@@ -97,30 +117,34 @@ const InterviewScreen: React.FC<InterviewScreenProps> = ({ jobDescription, setti
              {isModelSpeaking ? (
                 <div className="space-y-4">
                   <p className="text-gray-500 uppercase tracking-widest text-[10px] font-bold">Interviewer is speaking...</p>
-                  <p className="text-2xl text-white font-medium leading-relaxed drop-shadow-lg min-h-[3rem]">
-                    {textBuffer ? `"${textBuffer}"` : "..."}
+                  <p className="text-2xl text-white font-medium leading-relaxed drop-shadow-lg min-h-[3.5rem] px-4 italic">
+                    {textBuffer ? `"${textBuffer}"` : "Starting the conversation..."}
                   </p>
                 </div>
              ) : (
                 <div className="flex flex-col items-center gap-4">
-                   <p className="text-gray-500 uppercase tracking-widest text-[10px] font-bold">Your turn to answer</p>
-                   <div className="flex flex-col items-center gap-2">
-                      <span className={`font-mono text-4xl transition-colors ${timeLeft < 15 ? 'text-red-500 animate-pulse' : 'text-green-400'}`}>
-                        {Math.floor(timeLeft / 60)}:{(timeLeft % 60).toString().padStart(2, '0')}
-                      </span>
-                      <div className="h-1.5 w-32 bg-gray-800 rounded-full overflow-hidden">
-                         <div className="h-full bg-green-500 transition-all duration-75" style={{ width: `${Math.min(100, currentVolume * 400)}%` }} />
-                      </div>
-                   </div>
+                   <p className="text-gray-500 uppercase tracking-widest text-[10px] font-bold">
+                     {transcript.length === 0 ? "Waiting for intro..." : "Your turn to answer"}
+                   </p>
+                   {transcript.length > 0 && (
+                     <div className="flex flex-col items-center gap-2">
+                        <span className={`font-mono text-4xl transition-colors ${timeLeft < 15 ? 'text-red-500 animate-pulse' : 'text-green-400'}`}>
+                          {Math.floor(timeLeft / 60)}:{(timeLeft % 60).toString().padStart(2, '0')}
+                        </span>
+                        <div className="h-1.5 w-32 bg-gray-800 rounded-full overflow-hidden">
+                           <div className="h-full bg-green-500 transition-all duration-75" style={{ width: `${Math.min(100, currentVolume * 400)}%` }} />
+                        </div>
+                     </div>
+                   )}
                 </div>
              )}
           </div>
         </div>
       </div>
 
-      {/* Transcript Footer (Partial history) */}
+      {/* Transcript Footer */}
       <div className="h-40 bg-black/40 border-t border-white/10 p-6 overflow-y-auto scrollbar-hide">
-        <div className="max-w-3xl mx-auto space-y-4 opacity-40 hover:opacity-100 transition-opacity">
+        <div className="max-w-3xl mx-auto space-y-4 opacity-50 hover:opacity-100 transition-opacity">
           {transcript.slice(-2).map((t, i) => (
             <div key={i} className={`flex flex-col ${t.role === 'user' ? 'items-end' : 'items-start'}`}>
                <span className="text-[10px] font-bold text-gray-500 uppercase mb-1">
@@ -131,8 +155,10 @@ const InterviewScreen: React.FC<InterviewScreenProps> = ({ jobDescription, setti
                </div>
             </div>
           ))}
-          {transcript.length === 0 && !isModelSpeaking && (
-            <div className="text-center text-gray-600 text-sm italic">Waiting for interview to begin...</div>
+          {transcript.length === 0 && !isModelSpeaking && isConnected && (
+            <div className="text-center text-gray-600 text-sm italic py-4">
+              Connected. The interviewer will start in a moment...
+            </div>
           )}
         </div>
       </div>
