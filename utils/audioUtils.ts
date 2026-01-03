@@ -27,7 +27,8 @@ export async function decodeAudioData(
   sampleRate: number,
   numChannels: number,
 ): Promise<AudioBuffer> {
-  // Use byteOffset and byteLength to ensure correct alignment if the buffer is shared
+  // Ensure we handle potential alignment issues by using a copy if necessary
+  // but usually TypedArray.buffer is fine if byteOffset is 0.
   const dataInt16 = new Int16Array(data.buffer, data.byteOffset, data.byteLength / 2);
   const frameCount = dataInt16.length / numChannels;
   const buffer = ctx.createBuffer(numChannels, frameCount, sampleRate);
@@ -35,19 +36,17 @@ export async function decodeAudioData(
   for (let channel = 0; channel < numChannels; channel++) {
     const channelData = buffer.getChannelData(channel);
     for (let i = 0; i < frameCount; i++) {
-      // Convert Int16 to Float32 [-1.0, 1.0]
       channelData[i] = dataInt16[i * numChannels + channel] / 32768.0;
     }
   }
   return buffer;
 }
 
-// Converts Float32Array from AudioBuffer (microphone) to PCM Int16 ArrayBuffer
 export function float32ToInt16(float32: Float32Array): Int16Array {
   const int16 = new Int16Array(float32.length);
   for (let i = 0; i < float32.length; i++) {
     const s = Math.max(-1, Math.min(1, float32[i]));
-    int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+    int16[i] = s < 0 ? s * 32768 : s * 32767;
   }
   return int16;
 }

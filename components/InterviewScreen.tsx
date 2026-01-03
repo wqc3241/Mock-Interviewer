@@ -13,20 +13,22 @@ interface InterviewScreenProps {
 const InterviewScreen: React.FC<InterviewScreenProps> = ({ jobDescription, settings, persona, onEndSession }) => {
   const apiKey = process.env.API_KEY || '';
   
-  // Memoize to prevent useInterviewSession from re-running in a loop
   const handleDisconnect = useCallback(() => {
-    console.log("Interview session disconnected");
+    console.log("Interview session unmounted or disconnected");
   }, []);
 
   const { 
     isConnected, 
+    isConnecting,
+    error,
     isModelSpeaking, 
     currentVolume, 
     transcript, 
     textBuffer, 
     audioContextSuspended,
     resumeAudio,
-    disconnect 
+    disconnect,
+    retry
   } = useInterviewSession({
     apiKey, 
     jobDescription, 
@@ -48,11 +50,32 @@ const InterviewScreen: React.FC<InterviewScreenProps> = ({ jobDescription, setti
 
   const ringSize = 140 + (currentVolume * 300);
 
+  // Error UI
+  if (error) {
+    return (
+      <div className="max-w-5xl mx-auto h-[85vh] flex flex-col items-center justify-center bg-gray-900 rounded-3xl overflow-hidden shadow-2xl border border-red-500/20 text-center p-12">
+        <div className="w-20 h-20 bg-red-500/10 rounded-full flex items-center justify-center mb-6 text-red-500">
+           <svg className="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+        </div>
+        <h2 className="text-2xl font-bold text-white mb-4">Session Interrupted</h2>
+        <p className="text-gray-400 max-w-md mb-8 leading-relaxed">{error}</p>
+        <div className="flex gap-4">
+          <button onClick={retry} className="bg-indigo-600 hover:bg-indigo-700 text-white px-8 py-3 rounded-xl font-bold transition-all shadow-lg shadow-indigo-500/20">
+            Retry Connection
+          </button>
+          <button onClick={() => onEndSession(transcript)} className="bg-gray-800 hover:bg-gray-700 text-gray-300 px-8 py-3 rounded-xl font-bold transition-all border border-white/5">
+            View Partial Feedback
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-5xl mx-auto h-[85vh] flex flex-col bg-gray-900 rounded-3xl overflow-hidden shadow-2xl border border-white/5 relative">
       
       {/* Audio Context Activation Overlay */}
-      {audioContextSuspended && (
+      {audioContextSuspended && isConnected && (
         <div 
           className="absolute inset-0 z-50 bg-black/90 backdrop-blur-md flex flex-col items-center justify-center p-8 text-center cursor-pointer group"
           onClick={resumeAudio}
@@ -60,11 +83,8 @@ const InterviewScreen: React.FC<InterviewScreenProps> = ({ jobDescription, setti
           <div className="w-24 h-24 bg-indigo-600 rounded-full flex items-center justify-center mb-6 group-hover:scale-110 transition-transform shadow-2xl shadow-indigo-500/40">
             <svg className="w-12 h-12 text-white ml-1" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
           </div>
-          <h2 className="text-3xl font-black text-white mb-3">Ready to Start?</h2>
-          <p className="text-gray-400 max-w-sm text-lg">Click anywhere to activate your audio and begin the interview with {persona?.name || 'the recruiter'}.</p>
-          <div className="mt-8 px-6 py-2 border border-white/10 rounded-full text-xs text-gray-500 uppercase tracking-widest animate-pulse">
-            Waiting for user interaction
-          </div>
+          <h2 className="text-3xl font-black text-white mb-3">Begin Interview</h2>
+          <p className="text-gray-400 max-w-sm text-lg">Click anywhere to activate your audio and allow {persona?.name || 'the interviewer'} to start.</p>
         </div>
       )}
 
@@ -72,7 +92,7 @@ const InterviewScreen: React.FC<InterviewScreenProps> = ({ jobDescription, setti
       <div className="px-8 py-5 border-b border-white/10 flex justify-between items-center bg-black/20 backdrop-blur-md z-20">
         <div className="flex items-center gap-4">
           <div className="w-10 h-10 rounded-full bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center text-white font-bold text-lg shadow-lg">
-            {persona?.name[0] || "A"}
+            {persona?.name?.[0] || "A"}
           </div>
           <div className="max-w-md">
             <h2 className="text-white font-bold leading-tight">{persona?.name || "AI Interviewer"}</h2>
@@ -92,15 +112,16 @@ const InterviewScreen: React.FC<InterviewScreenProps> = ({ jobDescription, setti
       {/* Main Stage */}
       <div className="flex-1 relative flex flex-col items-center justify-center overflow-hidden bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-indigo-500/5 via-transparent to-transparent">
         
-        {!isConnected && (
-           <div className="absolute top-4 bg-yellow-500/20 text-yellow-500 px-4 py-1 rounded-full text-xs font-bold animate-pulse border border-yellow-500/20">
-             Establishing Secure Connection...
+        {isConnecting && (
+           <div className="absolute top-4 bg-yellow-500/20 text-yellow-500 px-4 py-1 rounded-full text-xs font-bold animate-pulse border border-yellow-500/20 flex items-center gap-2">
+             <div className="w-2 h-2 bg-yellow-500 rounded-full animate-ping" />
+             Connecting to Secure Lab...
            </div>
         )}
 
         {/* Visualizer Aura */}
         <div 
-          className={`absolute rounded-full transition-all duration-500 blur-[100px] opacity-20 ${isModelSpeaking ? 'bg-indigo-500' : 'bg-green-500'}`}
+          className={`absolute rounded-full transition-all duration-700 blur-[100px] opacity-20 ${isModelSpeaking ? 'bg-indigo-500' : 'bg-green-500'}`}
           style={{ width: isModelSpeaking ? 500 : ringSize * 2, height: isModelSpeaking ? 500 : ringSize * 2 }}
         />
         
@@ -137,9 +158,9 @@ const InterviewScreen: React.FC<InterviewScreenProps> = ({ jobDescription, setti
              ) : (
                 <div className="flex flex-col items-center gap-6 animate-fade-in">
                    <p className="text-green-500 uppercase tracking-[0.2em] text-[10px] font-black opacity-80">
-                     {transcript.length === 0 ? "Listening for Introduction..." : "Your turn to respond"}
+                     {transcript.length === 0 ? "Establishing Vibe..." : "Listening to Your Response"}
                    </p>
-                   {transcript.length > 0 && (
+                   {transcript.length > 0 && isConnected && !audioContextSuspended && (
                      <div className="flex flex-col items-center gap-4">
                         <div className="px-6 py-2 bg-white/5 rounded-2xl border border-white/10 backdrop-blur-sm">
                            <span className={`font-mono text-5xl font-light tracking-tighter transition-colors ${timeLeft < 15 ? 'text-red-500 animate-pulse' : 'text-green-400'}`}>
@@ -171,8 +192,8 @@ const InterviewScreen: React.FC<InterviewScreenProps> = ({ jobDescription, setti
             </div>
           ))}
           {transcript.length === 0 && !isModelSpeaking && isConnected && (
-            <div className="text-center text-gray-500 text-xs font-medium tracking-wide py-4 animate-pulse">
-              CONNECTION ESTABLISHED. WAITING FOR INTERVIEWER TO OPEN...
+            <div className="text-center text-gray-500 text-xs font-medium tracking-wide py-4 animate-pulse uppercase">
+               Interview Starting... Please wait for {persona?.name || 'the recruiter'}.
             </div>
           )}
         </div>

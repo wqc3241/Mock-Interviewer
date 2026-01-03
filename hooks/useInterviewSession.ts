@@ -13,6 +13,8 @@ interface UseInterviewSessionProps {
 
 export const useInterviewSession = ({ apiKey, jobDescription, persona, onDisconnect }: UseInterviewSessionProps) => {
   const [isConnected, setIsConnected] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [transcript, setTranscript] = useState<TranscriptItem[]>([]);
   const [currentVolume, setCurrentVolume] = useState(0);
   const [isModelSpeaking, setIsModelSpeaking] = useState(false);
@@ -28,7 +30,6 @@ export const useInterviewSession = ({ apiKey, jobDescription, persona, onDisconn
   const currentInputTranscriptionRef = useRef('');
   const currentOutputTranscriptionRef = useRef('');
   
-  const connectionStarted = useRef(false);
   const nudgeSent = useRef(false);
   const onDisconnectRef = useRef(onDisconnect);
 
@@ -36,7 +37,6 @@ export const useInterviewSession = ({ apiKey, jobDescription, persona, onDisconn
     onDisconnectRef.current = onDisconnect;
   }, [onDisconnect]);
 
-  // Use refs for stable access to state-like JD and Persona data to avoid dependency-induced loops
   const jdRef = useRef(jobDescription);
   const personaRef = useRef(persona);
   useEffect(() => { jdRef.current = jobDescription; }, [jobDescription]);
@@ -52,10 +52,8 @@ export const useInterviewSession = ({ apiKey, jobDescription, persona, onDisconn
       }
       setAudioContextSuspended(false);
 
-      // Once user interacts and audio is active, nudge the model to start if it hasn't already
       if (sessionRef.current && !nudgeSent.current) {
         nudgeSent.current = true;
-        // In Live API, we can nudge the model turn by sending a text-based input part
         sessionRef.current.sendRealtimeInput({ 
           text: "The candidate has entered the room and is ready. Please introduce yourself and begin the interview." 
         });
@@ -66,8 +64,10 @@ export const useInterviewSession = ({ apiKey, jobDescription, persona, onDisconn
   }, []);
 
   const connect = useCallback(async () => {
-    if (!apiKey || connectionStarted.current) return;
-    connectionStarted.current = true;
+    if (!apiKey || isConnecting || isConnected) return;
+    
+    setIsConnecting(true);
+    setError(null);
 
     try {
       const ai = new GoogleGenAI({ apiKey });
@@ -85,27 +85,21 @@ export const useInterviewSession = ({ apiKey, jobDescription, persona, onDisconn
       const p = personaRef.current;
       const j = jdRef.current;
 
-      const personaInstruction = p ? `
-        ADOPT INTERVIEWER PERSONA:
-        Name: ${p.name}
-        Professional Style: ${p.style}
-        Background: ${p.backgroundSummary}
-        Company Context: ${p.companyVibe}
-      ` : "Adopt a standard professional senior recruiter persona.";
-
       const sysInstruction = `
-        ${personaInstruction}
-        
-        CONTEXT:
-        Target Role: ${j.title}
-        JD Content: ${j.content.substring(0, 500)}
+        ADOPT INTERVIEWER PERSONA:
+        Name: ${p?.name || 'Recruiter'}
+        Style: ${p?.style || 'Professional'}
+        Context: ${p?.companyVibe || 'Corporate'}
 
-        CRITICAL OPERATIONAL INSTRUCTIONS:
-        1. **INITIATION**: You are the interviewer. You MUST start the conversation. Do not wait for the user to speak first. 
-        2. **FIRST TURN**: Introduce yourself briefly and ask the first behavioral or technical question based on the JD.
-        3. **PACING**: Be patient. Wait for the candidate to finish their response (at least 2 seconds of silence) before you reply.
-        4. **INTERRUPTIONS**: If the user starts talking while you are speaking, STOP your audio output immediately.
-        5. **LENGTH**: Keep your responses concise (under 3 sentences).
+        GOAL: Interview the candidate for the ${j.title} role.
+        JD HIGHLIGHTS: ${j.content.substring(0, 300)}
+
+        VOICE INTERACTION RULES:
+        1. **START IMMEDIATELY**: Introduce yourself and ask the first question once nudged.
+        2. **STAY IN CHARACTER**: Maintain your professional style.
+        3. **WAIT FOR RESPONSE**: Be patient. Give the user space to speak.
+        4. **CONCISION**: Keep turns short.
+        5. **NO INTERRUPTIONS**: Do not cut the user off unless they have stopped speaking for a significant time.
       `;
 
       const sessionPromise = ai.live.connect({
@@ -123,11 +117,11 @@ export const useInterviewSession = ({ apiKey, jobDescription, persona, onDisconn
           onopen: async () => {
             console.log("Live session connection established");
             setIsConnected(true);
+            setIsConnecting(false);
             
             const session = await sessionPromise;
             sessionRef.current = session;
 
-            // Setup microphone capture
             const source = inputCtx.createMediaStreamSource(stream);
             const processor = inputCtx.createScriptProcessor(4096, 1, 1);
             
@@ -135,13 +129,14 @@ export const useInterviewSession = ({ apiKey, jobDescription, persona, onDisconn
               if (!sessionRef.current) return;
               const inputData = e.inputBuffer.getChannelData(0);
               
-              // Volume visualization
               let sum = 0;
               for(let i = 0; i < inputData.length; i++) sum += inputData[i] * inputData[i];
-              setCurrentVolume(Math.sqrt(sum / inputData.length));
+              const vol = Math.sqrt(sum / inputData.length);
+              setCurrentVolume(vol);
               
-              // Only stream input if we're not suspended (user has clicked start)
-              if (outputCtx.state !== 'suspended') {
+              // Simple silence gate (noise floor) to prevent 503/server crashes from noise
+              const SILENCE_THRESHOLD = 0.005; 
+              if (outputCtx.state !== 'suspended' && vol > SILENCE_THRESHOLD) {
                 sessionRef.current.sendRealtimeInput({ media: createBlob(inputData) });
               }
             };
@@ -152,7 +147,6 @@ export const useInterviewSession = ({ apiKey, jobDescription, persona, onDisconn
             processor.connect(silenceGain);
             silenceGain.connect(inputCtx.destination);
 
-            // Trigger the model to speak if it hasn't started and context is already active
             if (outputCtx.state !== 'suspended' && !nudgeSent.current) {
               nudgeSent.current = true;
               session.sendRealtimeInput({ text: "Please begin the interview." });
@@ -220,23 +214,22 @@ export const useInterviewSession = ({ apiKey, jobDescription, persona, onDisconn
           onclose: () => {
             console.log("Live session closed");
             setIsConnected(false);
-            connectionStarted.current = false;
-            onDisconnectRef.current();
+            setIsConnecting(false);
           },
-          onerror: (e) => {
+          onerror: (e: any) => {
             console.error("Live session error:", e);
             setIsConnected(false);
-            connectionStarted.current = false;
-            onDisconnectRef.current();
+            setIsConnecting(false);
+            setError(e?.message || "The service is currently unavailable. Please check your connection or try again later.");
           }
         }
       });
-    } catch (e) {
+    } catch (e: any) {
       console.error("Connect failed:", e);
-      connectionStarted.current = false;
-      onDisconnectRef.current();
+      setIsConnecting(false);
+      setError(e?.message || "Connection failed.");
     }
-  }, [apiKey]); // Dependency on apiKey only to keep the function stable
+  }, [apiKey]);
 
   const disconnect = useCallback(() => {
     if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
@@ -244,7 +237,7 @@ export const useInterviewSession = ({ apiKey, jobDescription, persona, onDisconn
       if (ref.current && ref.current.state !== 'closed') ref.current.close();
     });
     setIsConnected(false);
-    connectionStarted.current = false;
+    setIsConnecting(false);
     nudgeSent.current = false;
   }, []);
 
@@ -253,5 +246,5 @@ export const useInterviewSession = ({ apiKey, jobDescription, persona, onDisconn
     return () => disconnect();
   }, [connect, disconnect]);
 
-  return { isConnected, isModelSpeaking, currentVolume, transcript, textBuffer, audioContextSuspended, resumeAudio, disconnect };
+  return { isConnected, isConnecting, error, isModelSpeaking, currentVolume, transcript, textBuffer, audioContextSuspended, resumeAudio, disconnect, retry: connect };
 };
