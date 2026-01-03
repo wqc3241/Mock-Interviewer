@@ -1,9 +1,12 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import SetupScreen from './components/SetupScreen';
 import InterviewScreen from './components/InterviewScreen';
 import FeedbackScreen from './components/FeedbackScreen';
-import { AppState, JobDescription, InterviewSettings, TranscriptItem, ResearchedPersona } from './types';
+import { AppState, JobDescription, InterviewSettings, TranscriptItem, ResearchedPersona, UserProfile, SavedProfile } from './types';
+
+// Updated with the user-provided Google Client ID
+const GOOGLE_CLIENT_ID = "612704318712-05gt7v8tmsg66orjd26623enobjct8jo.apps.googleusercontent.com";
 
 const App: React.FC = () => {
   const [appState, setAppState] = useState<AppState>(AppState.SETUP);
@@ -11,6 +14,101 @@ const App: React.FC = () => {
   const [settings, setSettings] = useState<InterviewSettings>({ timeLimitSeconds: 120 });
   const [transcript, setTranscript] = useState<TranscriptItem[]>([]);
   const [persona, setPersona] = useState<ResearchedPersona | null>(null);
+  const [user, setUser] = useState<UserProfile | null>(null);
+  const [savedProfiles, setSavedProfiles] = useState<SavedProfile[]>([]);
+
+  // Load user and profiles from local storage on mount
+  useEffect(() => {
+    const savedUser = localStorage.getItem('mockmate_user');
+    if (savedUser) {
+      setUser(JSON.parse(savedUser));
+    }
+
+    const savedProfs = localStorage.getItem('mockmate_profiles');
+    if (savedProfs) {
+      setSavedProfiles(JSON.parse(savedProfs));
+    }
+  }, []);
+
+  // Persist profiles when they change
+  useEffect(() => {
+    localStorage.setItem('mockmate_profiles', JSON.stringify(savedProfiles));
+  }, [savedProfiles]);
+
+  const handleCredentialResponse = useCallback((response: any) => {
+    try {
+      // Decode JWT ID Token
+      const base64Url = response.credential.split('.')[1];
+      const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+      const jsonPayload = decodeURIComponent(
+        atob(base64)
+          .split('')
+          .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+          .join('')
+      );
+      const payload = JSON.parse(jsonPayload);
+      
+      const newUser: UserProfile = {
+        name: payload.name,
+        email: payload.email,
+        picture: payload.picture
+      };
+      
+      setUser(newUser);
+      localStorage.setItem('mockmate_user', JSON.stringify(newUser));
+    } catch (e) {
+      console.error("Failed to decode Google ID Token", e);
+    }
+  }, []);
+
+  useEffect(() => {
+    const initializeGoogleSignIn = () => {
+      if ((window as any).google && !user && appState === AppState.SETUP) {
+        (window as any).google.accounts.id.initialize({
+          client_id: GOOGLE_CLIENT_ID,
+          callback: handleCredentialResponse,
+          auto_select: false,
+          cancel_on_tap_outside: true,
+        });
+        
+        const buttonDiv = document.getElementById("google-sso-button");
+        if (buttonDiv) {
+          (window as any).google.accounts.id.renderButton(buttonDiv, {
+            theme: "outline",
+            size: "large",
+            shape: "pill",
+            width: 240
+          });
+        }
+      }
+    };
+
+    // Retry initialization if the script hasn't loaded yet
+    const timer = setTimeout(initializeGoogleSignIn, 500);
+    return () => clearTimeout(timer);
+  }, [handleCredentialResponse, user, appState]);
+
+  const handleLogout = () => {
+    setUser(null);
+    localStorage.removeItem('mockmate_user');
+    // Also sign out from Google session
+    if ((window as any).google) {
+      (window as any).google.accounts.id.disableAutoSelect();
+    }
+  };
+
+  const saveProfile = (profile: Omit<SavedProfile, 'id' | 'createdAt'>) => {
+    const newProfile: SavedProfile = {
+      ...profile,
+      id: crypto.randomUUID(),
+      createdAt: Date.now()
+    };
+    setSavedProfiles(prev => [newProfile, ...prev]);
+  };
+
+  const deleteProfile = (id: string) => {
+    setSavedProfiles(prev => prev.filter(p => p.id !== id));
+  };
 
   const handleStartInterview = (jd: JobDescription, s: InterviewSettings, p: ResearchedPersona | null) => {
     setJobDescription(jd);
@@ -41,10 +139,25 @@ const App: React.FC = () => {
             </div>
             <span className="font-black text-2xl tracking-tighter">MOCKMATE</span>
           </div>
-          <div className="flex items-center gap-4 text-xs font-bold text-gray-500 uppercase tracking-widest">
-            {appState === AppState.SETUP ? "Configuration" : appState === AppState.INTERVIEW ? "Live Session" : "Analysis"}
-            <span className="w-1 h-1 bg-gray-700 rounded-full" />
-            Gemini 3 Powered
+
+          <div className="flex items-center gap-6">
+            <div className="hidden md:flex items-center gap-4 text-xs font-bold text-gray-500 uppercase tracking-widest">
+              {appState === AppState.SETUP ? "Configuration" : appState === AppState.INTERVIEW ? "Live Session" : "Analysis"}
+              <span className="w-1 h-1 bg-gray-700 rounded-full" />
+              Gemini 3 Powered
+            </div>
+
+            {user ? (
+              <div className="flex items-center gap-4 bg-white/5 pl-4 pr-2 py-1.5 rounded-full border border-white/10">
+                <div className="flex flex-col items-end">
+                  <span className="text-sm font-bold text-white leading-none">{user.name}</span>
+                  <button onClick={handleLogout} className="text-[10px] text-gray-400 hover:text-white uppercase font-black tracking-tighter mt-0.5">Logout</button>
+                </div>
+                <img src={user.picture} alt={user.name} className="w-8 h-8 rounded-full border border-indigo-500/30" />
+              </div>
+            ) : (
+              <div id="google-sso-button" className="min-w-[200px] flex justify-end"></div>
+            )}
           </div>
         </div>
       </nav>
@@ -52,6 +165,10 @@ const App: React.FC = () => {
       <main className="container mx-auto px-4 py-12">
         {appState === AppState.SETUP && (
           <SetupScreen 
+            user={user}
+            savedProfiles={savedProfiles}
+            onSaveProfile={saveProfile}
+            onDeleteProfile={deleteProfile}
             onStart={handleStartInterview} 
             onResearchStart={() => setAppState(AppState.RESEARCHING)}
           />

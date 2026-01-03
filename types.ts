@@ -1,9 +1,26 @@
 
+
 export interface JobDescription {
   title: string;
   content: string;
   link?: string;
   interviewerInfo?: string;
+}
+
+export interface UserProfile {
+  name: string;
+  email: string;
+  picture: string;
+}
+
+export interface SavedProfile {
+  id: string;
+  label: string;
+  title: string;
+  content: string;
+  link?: string;
+  interviewerInfo?: string;
+  createdAt: number;
 }
 
 export interface ResearchedPersona {
