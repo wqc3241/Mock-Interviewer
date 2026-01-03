@@ -1,0 +1,7 @@
+{
+  "name": "MockMate - AI Interview Trainer",
+  "description": "Real-time interactive voice interview trainer powered by Gemini Live API. Upload a job description, practice answering questions with time limits, and get comprehensive feedback on your performance.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
