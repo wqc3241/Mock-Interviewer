@@ -28,7 +28,8 @@ const InterviewScreen: React.FC<InterviewScreenProps> = ({ jobDescription, setti
     audioContextSuspended,
     resumeAudio,
     disconnect,
-    retry
+    retry,
+    requestNewQuestion
   } = useInterviewSession({
     apiKey, 
     jobDescription, 
@@ -125,7 +126,7 @@ const InterviewScreen: React.FC<InterviewScreenProps> = ({ jobDescription, setti
           style={{ width: isModelSpeaking ? 500 : ringSize * 2, height: isModelSpeaking ? 500 : ringSize * 2 }}
         />
         
-        <div className="relative z-10 flex flex-col items-center gap-12 w-full px-12">
+        <div className="relative z-10 flex flex-col items-center gap-8 w-full px-12">
           {/* Avatar Ring */}
           <div className={`relative transition-all duration-700 ${isModelSpeaking ? 'scale-110' : 'scale-100'}`}>
              <div className="w-56 h-56 rounded-full border-8 border-white/5 flex items-center justify-center bg-gray-800 shadow-2xl overflow-hidden relative">
@@ -146,6 +147,21 @@ const InterviewScreen: React.FC<InterviewScreenProps> = ({ jobDescription, setti
              {isModelSpeaking && <div className="absolute -inset-4 rounded-full border border-indigo-500/30 animate-ping opacity-20" />}
              {!isModelSpeaking && currentVolume > 0.05 && <div className="absolute -inset-4 rounded-full border border-green-500/30 animate-ping opacity-20" />}
           </div>
+
+          {/* Regenerate Button - Visible only when connected and model has spoken at least once or is speaking */}
+          {(isConnected && !audioContextSuspended && !isConnecting) && (
+            <button
+              onClick={requestNewQuestion}
+              disabled={isConnecting}
+              className="flex items-center gap-2 px-5 py-2.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-full text-xs font-bold text-gray-400 hover:text-indigo-400 transition-all active:scale-95 group shadow-xl backdrop-blur-md"
+              title="Request a different question if the current one is inappropriate"
+            >
+              <svg className={`w-4 h-4 group-hover:rotate-180 transition-transform duration-500 ${isModelSpeaking ? 'animate-spin-slow' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              Regenerate Question
+            </button>
+          )}
 
           <div className="max-w-3xl w-full text-center space-y-8">
              {isModelSpeaking ? (

@@ -1,3 +1,4 @@
+
 import React, { useEffect, useState } from 'react';
 import { GoogleGenAI, Type } from "@google/genai";
 import { FeedbackReport, JobDescription, TranscriptItem } from '../types';
@@ -11,21 +12,31 @@ interface FeedbackScreenProps {
 const FeedbackScreen: React.FC<FeedbackScreenProps> = ({ transcript, jobDescription, onRestart }) => {
   const [report, setReport] = useState<FeedbackReport | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    let isMounted = true;
+
     const generateFeedback = async () => {
         if (!transcript || transcript.length === 0) {
-            setLoading(false);
+            if (isMounted) {
+                setError("No interview transcript found to analyze.");
+                setLoading(false);
+            }
             return;
         }
 
         const apiKey = process.env.API_KEY;
-        if (!apiKey) return;
+        if (!apiKey) {
+            if (isMounted) {
+                setError("API Key is missing. Please ensure your environment is configured correctly.");
+                setLoading(false);
+            }
+            return;
+        }
 
         const ai = new GoogleGenAI({ apiKey });
-
-        // Format transcript for the prompt. Added safety check.
-        const transcriptText = transcript?.map(t => `${t.role.toUpperCase()}: ${t.text}`).join('\n') || '';
+        const transcriptText = transcript.map(t => `${t.role.toUpperCase()}: ${t.text}`).join('\n');
 
         const prompt = `
         Role: Expert Interview Coach & Technical Recruiter.
@@ -41,26 +52,21 @@ const FeedbackScreen: React.FC<FeedbackScreenProps> = ({ transcript, jobDescript
 
         CRITICAL INSTRUCTIONS:
         1. **Identify Q&A Pairs**: Group the transcript into distinct Question & Answer pairs. 
-           - If the interviewer has multiple turns in a row (e.g., "Great." then "Tell me about X"), COMBINE them to form the full question. 
-           - IGNORE trivial pleasantries if they don't lead to a question.
-        2. **Extract Question Text**: For the 'question' field, include the specific question asked by the interviewer. **NEVER leave this empty.**
+        2. **Extract Question Text**: For the 'question' field, include the specific question asked by the interviewer.
         3. **Generate Sample Outstanding Answer**: For 'modelAnswer', write a VERBATIM, first-person example of a perfect answer. 
-           - It should be professional, concise (approx 100-150 words), and strictly tailored to the Job Description. 
-           - Use the STAR method (Situation, Task, Action, Result) where applicable.
-           - Do not describe *how* to answer; actually *write* the answer the candidate should have given.
 
         Output JSON matching this schema:
         {
             overallScore: number (0-10),
-            summary: string (Professional executive summary),
+            summary: string,
             sections: [
                 {
-                    question: string (The actual question text),
-                    userAnswerSummary: string (Brief summary of what the user said),
-                    rating: number (1-10),
-                    strengths: string[] (List of 2-3 strong points),
-                    improvements: string[] (List of 2-3 specific actionable tips),
-                    modelAnswer: string (The verbatim outstanding sample answer)
+                    question: string,
+                    userAnswerSummary: string,
+                    rating: number,
+                    strengths: string[],
+                    improvements: string[],
+                    modelAnswer: string
                 }
             ]
         }
@@ -96,135 +102,181 @@ const FeedbackScreen: React.FC<FeedbackScreenProps> = ({ transcript, jobDescript
                 }
             });
 
-            if (response.text) {
-                const data = JSON.parse(response.text) as FeedbackReport;
-                setReport(data);
+            if (isMounted) {
+                if (response.text) {
+                    try {
+                        const data = JSON.parse(response.text) as FeedbackReport;
+                        setReport(data);
+                    } catch (parseErr) {
+                        console.error("JSON Parse Error:", parseErr);
+                        setError("Failed to parse the AI's feedback. Please try again.");
+                    }
+                } else {
+                    setError("The AI did not return a response. Please try again.");
+                }
             }
-        } catch (e) {
+        } catch (e: any) {
             console.error("Error generating feedback", e);
+            if (isMounted) {
+                setError(e?.message || "An unexpected error occurred during analysis.");
+            }
         } finally {
-            setLoading(false);
+            if (isMounted) {
+                setLoading(false);
+            }
         }
     };
 
     generateFeedback();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    
+    return () => {
+        isMounted = false;
+    };
+  }, [transcript, jobDescription]);
 
   if (loading) {
       return (
-          <div className="flex flex-col items-center justify-center h-screen bg-gray-50">
-              <div className="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-indigo-600 mb-4"></div>
-              <h2 className="text-xl font-semibold text-gray-700">Analyzing your performance...</h2>
-              <p className="text-gray-500 mt-2">Our AI coach is reviewing your answers and drafting sample responses.</p>
+          <div className="flex flex-col items-center justify-center min-h-[60vh] text-center p-8 bg-[#0f172a] rounded-3xl border border-white/5 shadow-2xl">
+              <div className="relative w-20 h-20 mb-8">
+                <div className="absolute inset-0 border-4 border-indigo-500/20 rounded-full"></div>
+                <div className="absolute inset-0 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+              </div>
+              <h2 className="text-3xl font-black text-white mb-3">Analyzing Performance</h2>
+              <p className="text-gray-400 max-w-sm leading-relaxed">Our AI coach is reviewing your transcript and drafting sample responses. This usually takes a few seconds.</p>
           </div>
       );
   }
 
-  if (!report) {
+  if (error || !report) {
       return (
-          <div className="p-8 text-center">
-              <h2 className="text-xl text-red-600">Could not generate report.</h2>
-              <button onClick={onRestart} className="mt-4 text-indigo-600 hover:underline">Try Again</button>
+          <div className="max-w-xl mx-auto text-center py-20 px-8 bg-red-500/5 rounded-3xl border border-red-500/20">
+              <div className="w-16 h-16 bg-red-500/10 rounded-full flex items-center justify-center mx-auto mb-6 text-red-500">
+                <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+              </div>
+              <h2 className="text-2xl font-bold text-white mb-2">Analysis Failed</h2>
+              <p className="text-gray-400 mb-8">{error || "Could not generate report."}</p>
+              <button 
+                onClick={onRestart} 
+                className="bg-white text-gray-900 px-8 py-3 rounded-xl font-bold hover:bg-gray-200 transition-colors shadow-lg"
+              >
+                Go Back to Setup
+              </button>
           </div>
       )
   }
 
   return (
-    <div className="max-w-4xl mx-auto bg-white shadow-xl rounded-xl overflow-hidden my-8">
+    <div className="max-w-5xl mx-auto bg-white/5 backdrop-blur-md rounded-3xl shadow-2xl border border-white/10 overflow-hidden animate-fade-in mb-12">
       {/* Header */}
-      <div className="bg-gray-900 text-white p-8">
-          <div className="flex justify-between items-start">
-            <div>
-                <h1 className="text-3xl font-bold mb-2">Interview Performance Report</h1>
-                <p className="opacity-80">{jobDescription.title}</p>
+      <div className="bg-gradient-to-br from-[#1e293b] to-[#0f172a] p-10 md:p-14 border-b border-white/5">
+          <div className="flex flex-col md:flex-row justify-between items-start gap-8">
+            <div className="flex-1">
+                <div className="flex items-center gap-3 mb-4">
+                  <span className="bg-indigo-600/20 text-indigo-400 text-[10px] font-black uppercase tracking-widest px-3 py-1 rounded-full border border-indigo-500/20">Executive Summary</span>
+                </div>
+                <h1 className="text-4xl md:text-5xl font-black text-white tracking-tighter mb-4">
+                  Session Analysis
+                </h1>
+                <p className="text-gray-400 text-lg leading-relaxed max-w-2xl italic">
+                  "{report.summary}"
+                </p>
             </div>
-            <div className="text-center bg-white/10 rounded-lg p-4 backdrop-blur-sm">
-                <div className="text-4xl font-bold text-yellow-400">{report.overallScore}/10</div>
-                <div className="text-xs uppercase tracking-wider mt-1">Overall Score</div>
+            <div className="bg-white/5 rounded-3xl p-8 border border-white/10 text-center min-w-[180px] backdrop-blur-xl">
+                <div className="text-6xl font-black text-indigo-400 tracking-tighter">{report.overallScore}<span className="text-2xl text-gray-600">/10</span></div>
+                <div className="text-[10px] uppercase font-black tracking-[0.2em] text-gray-500 mt-2">Overall Mastery</div>
             </div>
-          </div>
-          <div className="mt-6 p-4 bg-gray-800 rounded-lg border border-gray-700">
-              <p className="italic text-gray-300">"{report.summary}"</p>
           </div>
       </div>
 
       {/* Detailed Breakdown */}
-      <div className="p-8 space-y-8 bg-gray-50">
-          <h3 className="text-xl font-bold text-gray-800 border-b pb-2">Question Analysis</h3>
+      <div className="p-6 md:p-10 space-y-10">
+          <div className="flex items-center gap-4 mb-2">
+            <h3 className="text-xs font-black text-gray-500 uppercase tracking-[0.3em]">Individual Question Breakdown</h3>
+            <div className="h-px flex-1 bg-white/5"></div>
+          </div>
           
           {report.sections?.map((section, idx) => (
-              <div key={idx} className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-                  <div className="bg-white p-4 border-b border-gray-100 flex justify-between items-center">
-                      <h4 className="font-bold text-gray-800 text-lg flex-1 mr-4">
-                          <span className="text-indigo-600 mr-2">Q{idx+1}:</span> 
+              <div key={idx} className="bg-white/5 rounded-3xl border border-white/10 overflow-hidden hover:border-indigo-500/30 transition-colors">
+                  <div className="bg-white/[0.02] px-8 py-6 border-b border-white/5 flex flex-col md:flex-row justify-between items-center gap-4">
+                      <h4 className="font-bold text-white text-lg flex-1">
+                          <span className="text-indigo-500 mr-3 opacity-50 font-mono">#{idx+1}</span> 
                           {section.question || "Follow-up Question"}
                       </h4>
-                      <span className={`px-3 py-1 rounded-full text-sm font-bold whitespace-nowrap ${
-                          section.rating >= 8 ? 'bg-green-100 text-green-700' : 
-                          section.rating >= 5 ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'
+                      <div className={`px-4 py-1.5 rounded-full text-xs font-black uppercase tracking-widest ${
+                          section.rating >= 8 ? 'bg-green-500/10 text-green-400 border border-green-500/20' : 
+                          section.rating >= 5 ? 'bg-yellow-500/10 text-yellow-400 border border-yellow-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'
                       }`}>
-                          Rating: {section.rating}/10
-                      </span>
+                          Score: {section.rating}/10
+                      </div>
                   </div>
-                  <div className="p-6 space-y-6">
+                  <div className="p-8 space-y-8">
                       <div>
-                          <h5 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Your Answer Summary</h5>
-                          <p className="text-gray-600 bg-gray-50 p-3 rounded-lg text-sm">{section.userAnswerSummary}</p>
+                          <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest block mb-3">Your Response Summary</label>
+                          <p className="text-gray-300 text-sm leading-relaxed bg-black/20 p-5 rounded-2xl border border-white/5 italic">
+                            {section.userAnswerSummary}
+                          </p>
                       </div>
                       
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                          <div>
-                             <h5 className="text-xs font-bold text-green-600 uppercase tracking-wider mb-2 flex items-center">
-                                 <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path></svg>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                          <div className="bg-green-500/[0.02] p-6 rounded-2xl border border-green-500/10">
+                             <h5 className="text-[10px] font-black text-green-400 uppercase tracking-widest mb-4 flex items-center">
+                                 <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path></svg>
                                  Strengths
                              </h5>
-                             <ul className="list-disc list-inside text-sm text-gray-600 space-y-1">
-                                 {section.strengths?.map((s, i) => <li key={i}>{s}</li>)}
+                             <ul className="space-y-3">
+                                 {section.strengths?.map((s, i) => (
+                                   <li key={i} className="flex gap-3 text-sm text-gray-400">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-green-500 mt-1.5 shrink-0" />
+                                      {s}
+                                   </li>
+                                 ))}
                              </ul>
                           </div>
-                          <div>
-                             <h5 className="text-xs font-bold text-orange-600 uppercase tracking-wider mb-2 flex items-center">
-                                 <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
-                                 Areas for Improvement
+                          <div className="bg-indigo-500/[0.02] p-6 rounded-2xl border border-indigo-500/10">
+                             <h5 className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-4 flex items-center">
+                                 <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                                 Growth Areas
                              </h5>
-                             <ul className="list-disc list-inside text-sm text-gray-600 space-y-1">
-                                 {section.improvements?.map((s, i) => <li key={i}>{s}</li>)}
+                             <ul className="space-y-3">
+                                 {section.improvements?.map((s, i) => (
+                                   <li key={i} className="flex gap-3 text-sm text-gray-400">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 mt-1.5 shrink-0" />
+                                      {s}
+                                   </li>
+                                 ))}
                              </ul>
                           </div>
                       </div>
 
-                      {/* Sample Outstanding Answer Section */}
-                      <div className="bg-indigo-50 rounded-xl p-5 border border-indigo-100 relative overflow-hidden">
-                          <div className="absolute top-0 right-0 p-4 opacity-10">
-                             <svg className="w-16 h-16 text-indigo-600" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"></path></svg>
-                          </div>
-                          <h5 className="text-sm font-bold text-indigo-700 uppercase tracking-wider mb-3 flex items-center">
+                      <div className="bg-indigo-600/10 rounded-2xl p-8 border border-indigo-500/20 relative group overflow-hidden">
+                          <div className="absolute -top-4 -right-4 w-24 h-24 bg-indigo-500/10 rounded-full blur-3xl group-hover:bg-indigo-500/20 transition-all"></div>
+                          <h5 className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-4 flex items-center">
                               <span className="mr-2">✨</span> Sample Outstanding Answer
                           </h5>
-                          <div className="text-gray-800 text-sm leading-relaxed font-medium relative z-10 pl-4 border-l-4 border-indigo-300">
+                          <div className="text-gray-200 text-md leading-relaxed font-serif pl-6 border-l-2 border-indigo-500/30">
                               {section.modelAnswer ? (
-                                  <>"{section.modelAnswer}"</>
+                                  <span className="relative">
+                                    <span className="absolute -left-4 top-0 text-3xl text-indigo-500/30 font-serif leading-none">"</span>
+                                    {section.modelAnswer}
+                                    <span className="text-3xl text-indigo-500/30 font-serif leading-none">"</span>
+                                  </span>
                               ) : (
-                                  <span className="text-gray-400 italic">No sample answer generated.</span>
+                                  <span className="text-gray-600 italic">No sample answer generated.</span>
                               )}
                           </div>
-                          <p className="text-xs text-indigo-400 mt-3 text-right">Generated by Gemini 3 Pro</p>
                       </div>
                   </div>
               </div>
           ))}
-          {!report.sections?.length && (
-             <div className="text-gray-500 text-center italic">No specific question analysis available.</div>
-          )}
       </div>
       
-      <div className="p-8 bg-white border-t">
+      <div className="p-10 bg-white/5 border-t border-white/5 flex justify-center">
           <button 
             onClick={onRestart}
-            className="w-full bg-gray-900 hover:bg-black text-white font-bold py-3 rounded-lg transition shadow-lg"
+            className="group flex items-center gap-3 bg-indigo-600 hover:bg-indigo-500 text-white font-black px-10 py-5 rounded-2xl shadow-2xl shadow-indigo-500/20 transition-all active:scale-95"
           >
-              Start New Interview
+              Start New Simulation
+              <svg className="w-5 h-5 group-hover:translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 7l5 5m0 0l-5 5m5-5H6" /></svg>
           </button>
       </div>
     </div>

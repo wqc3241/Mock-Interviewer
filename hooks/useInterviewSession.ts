@@ -134,7 +134,6 @@ export const useInterviewSession = ({ apiKey, jobDescription, persona, onDisconn
               const vol = Math.sqrt(sum / inputData.length);
               setCurrentVolume(vol);
               
-              // Simple silence gate (noise floor) to prevent 503/server crashes from noise
               const SILENCE_THRESHOLD = 0.005; 
               if (outputCtx.state !== 'suspended' && vol > SILENCE_THRESHOLD) {
                 sessionRef.current.sendRealtimeInput({ media: createBlob(inputData) });
@@ -231,6 +230,23 @@ export const useInterviewSession = ({ apiKey, jobDescription, persona, onDisconn
     }
   }, [apiKey]);
 
+  const requestNewQuestion = useCallback(() => {
+    if (!sessionRef.current || !isConnected) return;
+    
+    // 1. Manually stop current audio localy for instant feedback
+    audioSourcesRef.current.forEach(s => { try { s.stop(); } catch {} });
+    audioSourcesRef.current.clear();
+    nextStartTimeRef.current = 0;
+    setIsModelSpeaking(false);
+    setTextBuffer('');
+    currentOutputTranscriptionRef.current = '';
+
+    // 2. Send the signal to the model
+    sessionRef.current.sendRealtimeInput({ 
+      text: "I didn't like that question or it was inappropriate. Please discard it and ask a completely different, highly relevant interview question instead." 
+    });
+  }, [isConnected]);
+
   const disconnect = useCallback(() => {
     if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
     [audioContextRef, inputAudioContextRef].forEach(ref => {
@@ -246,5 +262,18 @@ export const useInterviewSession = ({ apiKey, jobDescription, persona, onDisconn
     return () => disconnect();
   }, [connect, disconnect]);
 
-  return { isConnected, isConnecting, error, isModelSpeaking, currentVolume, transcript, textBuffer, audioContextSuspended, resumeAudio, disconnect, retry: connect };
+  return { 
+    isConnected, 
+    isConnecting, 
+    error, 
+    isModelSpeaking, 
+    currentVolume, 
+    transcript, 
+    textBuffer, 
+    audioContextSuspended, 
+    resumeAudio, 
+    disconnect, 
+    retry: connect,
+    requestNewQuestion
+  };
 };

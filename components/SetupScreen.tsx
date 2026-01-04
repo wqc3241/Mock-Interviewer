@@ -32,7 +32,22 @@ const SetupScreen: React.FC<SetupScreenProps> = ({
     onResearchStart();
 
     const apiKey = process.env.API_KEY;
-    if (!apiKey) return;
+    if (!apiKey) {
+      console.error("API Key missing during setup");
+      // Still allow start without research if API key is missing (fallback)
+      onStart(
+        { 
+          title: customJd?.title || "Candidate", 
+          content: customJd?.content || content, 
+          link: customJd?.link || jdLink, 
+          interviewerInfo: customJd?.interviewerInfo || interviewerName 
+        },
+        { timeLimitSeconds: timeLimit * 60 },
+        null
+      );
+      setIsResearching(false);
+      return;
+    }
 
     const ai = new GoogleGenAI({ apiKey });
     let finalTitle = customJd?.title || "Candidate";

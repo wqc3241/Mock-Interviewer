@@ -63,6 +63,7 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const initializeGoogleSignIn = () => {
+      // Only show button if user is NOT logged in and we are in setup mode
       if ((window as any).google && !user && appState === AppState.SETUP) {
         (window as any).google.accounts.id.initialize({
           client_id: GOOGLE_CLIENT_ID,
@@ -77,13 +78,12 @@ const App: React.FC = () => {
             theme: "outline",
             size: "large",
             shape: "pill",
-            width: 240
+            width: 200
           });
         }
       }
     };
 
-    // Retry initialization if the script hasn't loaded yet
     const timer = setTimeout(initializeGoogleSignIn, 500);
     return () => clearTimeout(timer);
   }, [handleCredentialResponse, user, appState]);
@@ -91,7 +91,6 @@ const App: React.FC = () => {
   const handleLogout = () => {
     setUser(null);
     localStorage.removeItem('mockmate_user');
-    // Also sign out from Google session
     if ((window as any).google) {
       (window as any).google.accounts.id.disableAutoSelect();
     }
@@ -156,7 +155,9 @@ const App: React.FC = () => {
                 <img src={user.picture} alt={user.name} className="w-8 h-8 rounded-full border border-indigo-500/30" />
               </div>
             ) : (
-              <div id="google-sso-button" className="min-w-[200px] flex justify-end"></div>
+              <div key="login-btn-container" className="flex justify-end">
+                <div id="google-sso-button"></div>
+              </div>
             )}
           </div>
         </div>
